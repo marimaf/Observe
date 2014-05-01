@@ -1,8 +1,20 @@
 package com.example.observe;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
+import org.apache.http.entity.StringEntity;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import com.loopj.android.http.AsyncHttpClient;
+import com.loopj.android.http.AsyncHttpResponseHandler;
+import com.loopj.android.http.RequestParams;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -20,6 +32,7 @@ import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
@@ -32,6 +45,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.TableRow;
 import android.widget.TextView;
+
 
 public class MainActivity extends Activity { 
 	String LOGTAG = "PcapCapture";
@@ -54,8 +68,8 @@ public class MainActivity extends Activity {
 	ArrayList<deferredUsbIntent> mDeferredIntents = new ArrayList<deferredUsbIntent>();
 
 	private TextView mTextDashUsb, mTextDashUsbSmall, mTextDashFile, 
-	mTextDashFileSmall,	mTextManageSmall, mTextDashHardware, mTextScan;
-	private TableRow mRowLogShare, mRowManage, mRowHardware, mRowScan;
+	mTextDashFileSmall,	mTextManageSmall, mTextDashHardware, mTextScan, mTextSendStatus;
+	private TableRow mRowLogShare, mRowManage, mRowHardware, mRowScan, mRowSendData;
 
 	private String mLogDir;
 	private File mLogPath = new File("");
@@ -430,13 +444,14 @@ public class MainActivity extends Activity {
 		mTextManageSmall = (TextView) findViewById(R.id.textManageSmall);
 		mTextDashHardware = (TextView) findViewById(R.id.textDashHardware);
 		mTextScan = (TextView) findViewById(R.id.textDashScan);
-
+		mTextSendStatus = (TextView) findViewById(R.id.textSendStatus);
+		
 		mRowLogShare = (TableRow) findViewById(R.id.tableRowFile);
 		mRowManage = (TableRow) findViewById(R.id.tableRowManage);
 		mRowHardware = (TableRow) findViewById(R.id.tableRowHardware);
 		//botón para scanear
 		mRowScan = (TableRow) findViewById(R.id.tableRowScan);
-		
+		mRowSendData = (TableRow) findViewById(R.id.tableSendData);
 		
         if (Build.MANUFACTURER.equals("motorola")) {
         	mTextDashHardware.setText("Motorola hardware has limitations on USB (special power " +
@@ -531,6 +546,33 @@ public class MainActivity extends Activity {
 			}
 		});
 
+		//Botón para enviar datos
+		mRowSendData.setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				//Envío datos al servidor
+				try {
+					send_cap();
+				} catch (FileNotFoundException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				
+				//send_data();
+				/*
+				try {
+					send_data_json();
+				} catch (UnsupportedEncodingException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (JSONException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				*/
+			}
+		});
+		
 		//Actualizo interfaz
 		doUpdateUi();
 	}
@@ -709,17 +751,130 @@ public class MainActivity extends Activity {
         }
     };
     
+    
+    private static final String cap_file = "/android.cap";
 	//Scanea la red durante time mili segundos
 	//Guarda los resultados en un archivo fijo: mLogDir + "/android-" + snow + ".cap"
 	private void scan(long time) throws InterruptedException
 	{
 		//comienzo servidor
-		start(mLogDir + "/android.cap");
+		start(mLogDir + cap_file);
 		//thread que maneja la finalización del scaneo
 		Handler stopHandler = new Handler();
 		stopHandler.postDelayed(stopServer, time);
 	}
 
+	private static final String URL_HISTORY = "http://10.201.41.171:3000/histories.json"; 
+			//"http://observe-web.herokuapp.com/histories";
+	private static final String URL_CAP = "http://192.168.50.33:3000/histories/upload.json"; 
+	private static AsyncHttpClient client = new AsyncHttpClient();
+
+	/* Envío el archivo cap al servidor */
+	private void send_cap() throws FileNotFoundException
+	{	
+	    //Defino tupla que quiero crear
+		RequestParams params = new RequestParams();
+	    Map<String, String> map = new HashMap<String, String>();
+	    map.put("usr", "Tablet Copec 1");
+	    map.put("pass", "t1");
+	    params.put("tablet", map);
+	    params.put("cap", new File(mLogDir + cap_file));
+	    
+	    //Envío mi tupla
+	    client.post(URL_CAP, params, new AsyncHttpResponseHandler() {
+	        @Override
+	        public void onSuccess(String response) {
+	            Log.w("async", "success!!!!");
+	            mTextSendStatus.setText(response + " ok");
+	        } 
+	        
+	        @Override
+	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
+	        {
+	        	mTextSendStatus.setText(statusCode + " fail");
+	        }
+
+
+	    });
+	}
+
+	
+	private void send_data_json() throws JSONException, UnsupportedEncodingException
+	{
+		//Defino tupla que quiero crear
+		JSONObject params = new JSONObject();
+        params.put("id_tablet", "1");
+	    params.put("sampling_time(1i)", "2015");
+	    params.put("sampling_time(2i)", "4");
+	    params.put("sampling_time(3i)", "6");
+	    params.put("sampling_time(4i)", "0");
+	    params.put("sampling_time(5i)", "5");
+	    params.put("congestion", "999");
+	    JSONObject total = new JSONObject();
+	    total.put("history", params);
+	    
+	    StringEntity entity = new StringEntity(total.toString());
+        
+	    mTextScan.setText(total.toString());
+	    
+	    //params.put("picture[name]","MyPictureName");
+	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
+	    
+	    //Envío mi tupla
+	    client.post(this, URL_HISTORY, entity, "application/json", new AsyncHttpResponseHandler() {
+	        @Override
+	        public void onSuccess(String response) {
+	            Log.w("async", "success!!!!");
+	            mTextScan.setText("entre");
+	        } 
+	        
+	        @Override
+	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
+	        {
+	        	//mTextScan.setText(statusCode + " fallo");
+	        }
+
+
+	    });
+	}
+	
+	private void send_data()
+	{
+
+	    //Defino tupla que quiero crear
+		RequestParams params = new RequestParams();
+	    Map<String, String> map = new HashMap<String, String>();
+	    map.put("id_tablet", "1");
+	    map.put("sampling_time(1i)", "2015");
+	    map.put("sampling_time(2i)", "4");
+	    map.put("sampling_time(3i)", "6");
+	    map.put("sampling_time(4i)", "00");
+	    map.put("sampling_time(5i)", "05");
+	    map.put("congestion", "999");
+	    params.put("history", map);
+
+	    mTextScan.setText(params.toString());
+	    
+	    //params.put("picture[name]","MyPictureName");
+	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
+	    
+	    //Envío mi tupla
+	    client.post(URL_HISTORY, params, new AsyncHttpResponseHandler() {
+	        @Override
+	        public void onSuccess(String response) {
+	            Log.w("async", "success!!!!");
+	            mTextScan.setText("entre");
+	        } 
+	        
+	        @Override
+	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
+	        {
+	        	//mTextScan.setText(statusCode + " fallo");
+	        }
+
+
+	    });
+	}
 
 
 }
