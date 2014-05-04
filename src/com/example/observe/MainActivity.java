@@ -29,6 +29,9 @@ import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.net.NetworkInfo.State;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -43,6 +46,8 @@ import android.util.Log;
 import android.view.View;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TableRow;
 import android.widget.TextView;
 
@@ -67,10 +72,14 @@ public class MainActivity extends Activity {
 
 	ArrayList<deferredUsbIntent> mDeferredIntents = new ArrayList<deferredUsbIntent>();
 
-	private TextView mTextDashUsb, mTextDashUsbSmall, mTextDashFile, 
-	mTextDashFileSmall,	mTextManageSmall, mTextDashHardware, mTextScan, mTextSendStatus;
-	private TableRow mRowLogShare, mRowManage, mRowHardware, mRowScan, mRowSendData;
-
+	private TextView mTextDashUsbSmall, mTextWifiConnection, mTextState, 
+	mTextDashFileSmall, mTextDashHardware, mTextSendStatus;
+	private TableRow mRowHardware;
+	
+	private Button btStartStop;
+	
+	private observeState systemState = observeState.pause; 
+	
 	private String mLogDir;
 	private File mLogPath = new File("");
 	private File mOldLogPath;
@@ -81,6 +90,12 @@ public class MainActivity extends Activity {
 	private String mUsbType = "", mUsbInfo = "";
 	private int mLastChannel = 0;
 
+	private BroadcastReceiver broadcastReceiver;
+	private boolean InternetConnection = false;
+	
+	//Indica si observe está funcionando
+	private boolean isRunning = false;
+	
 	public static int PREFS_REQ = 0x1001;
 
 	public static final String PREF_CHANNELHOP = "channel_hop";
@@ -367,26 +382,26 @@ public class MainActivity extends Activity {
 	//Actualiza la interfaz gráfica
 	// variable 'mUsbPresent' indica si conectó la antena
 	private void doUpdateUi() {
+		
+		//Actualizo conexión a internet
+        if (InternetConnection)
+        	mTextWifiConnection.setText("Ok");
+        else
+        	mTextWifiConnection.setText("No Internet access");
+        
 		if (!mUsbPresent) {
-			mTextDashUsb.setText("No USB device present");
-			mTextDashUsbSmall.setVisibility(View.GONE);
-			mTextDashUsbSmall.setText("");
+			mTextDashUsbSmall.setText("No USB device present");
 
 		} else {
-			mTextDashUsb.setText(mUsbType);
 			mTextDashUsbSmall.setText(mUsbInfo);
 			mTextDashUsbSmall.setVisibility(View.VISIBLE);
 		}
 
 		if (!mLogging) {
-			mTextDashFile.setText("Logging inactive");
 			mTextDashFileSmall.setText("");
 			mTextDashFileSmall.setVisibility(View.GONE);
-			mRowLogShare.setClickable(false);
 		} else {
-			mTextDashFile.setText(mLogPath.getName());
 			mTextDashFileSmall.setVisibility(View.VISIBLE);
-			mRowLogShare.setClickable(true);
 		}
 
 		if (mLogCount > 0 || mLogging) {
@@ -405,12 +420,26 @@ public class MainActivity extends Activity {
 			mTextDashFileSmall.setText("");
 		}
 
-		if (!mLocalLogging && mUsbPresent) {
-			mTextScan.setText("Scan");
-		} else if (mLocalLogging) {
-			mTextScan.setText("Scaneando...");
-		}
-
+		//Dejo actuvo el botón solo si tengo conexión a internet, hay una antena conectada y estoy
+		//en waiting o en pause
+		btStartStop.setEnabled(InternetConnection && mUsbPresent && 
+				(systemState == observeState.pause || systemState == observeState.waiting));
+		if(!isRunning)
+			btStartStop.setText("Start");
+		else
+			btStartStop.setText("Stop");
+		
+		//Actualizo estado de observe
+		if(systemState == observeState.pause)
+			mTextState.setText("Paused");
+		if(systemState == observeState.scanning)
+			mTextState.setText("Scanning");
+		if(systemState == observeState.sending)
+			mTextState.setText("Send data server");
+		if(systemState == observeState.waiting)
+			mTextState.setText("Waiting");
+		
+		
 		doUpdateFilesizes();
 	}
 
@@ -437,21 +466,16 @@ public class MainActivity extends Activity {
 
 		setContentView(R.layout.activity_main);
 
-		mTextDashUsb = (TextView) findViewById(R.id.textDashUsbDevice);
-		mTextDashUsbSmall = (TextView) findViewById(R.id.textDashUsbSmall);
-		mTextDashFile = (TextView) findViewById(R.id.textDashFile);
+		btStartStop = (Button) findViewById(R.id.buttonStartStop);
+
+		mTextState = (TextView) findViewById(R.id.textObserveState);
+		mTextDashUsbSmall = (TextView) findViewById(R.id.textDashUsbDevice);
+		mTextWifiConnection = (TextView) findViewById(R.id.textWifiState);
 		mTextDashFileSmall = (TextView) findViewById(R.id.textDashFileSmall);
-		mTextManageSmall = (TextView) findViewById(R.id.textManageSmall);
 		mTextDashHardware = (TextView) findViewById(R.id.textDashHardware);
-		mTextScan = (TextView) findViewById(R.id.textDashScan);
-		mTextSendStatus = (TextView) findViewById(R.id.textSendStatus);
+		mTextSendStatus = (TextView) findViewById(R.id.textServer);
 		
-		mRowLogShare = (TableRow) findViewById(R.id.tableRowFile);
-		mRowManage = (TableRow) findViewById(R.id.tableRowManage);
 		mRowHardware = (TableRow) findViewById(R.id.tableRowHardware);
-		//botón para scanear
-		mRowScan = (TableRow) findViewById(R.id.tableRowScan);
-		mRowSendData = (TableRow) findViewById(R.id.tableSendData);
 		
         if (Build.MANUFACTURER.equals("motorola")) {
         	mTextDashHardware.setText("Motorola hardware has limitations on USB (special power " +
@@ -510,73 +534,44 @@ public class MainActivity extends Activity {
 		list.Populate();
 		 */
 		// getFragmentManager().beginTransaction().add(R.id.fragment_filelist, list).commit();
-
 		
-		//Fila con botón para ir a ver mis archivos guardados
-		mRowManage.setOnClickListener(new View.OnClickListener() {
+		//Botón de inicio
+		btStartStop.setOnClickListener(new View.OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				Intent i = new Intent(mContext, FilemanagerActivity.class);
-				startActivity(i);
-			}
-		});
-
-		//Fila con mensaje que muestra el número de paquetes escuchados hasta el momento
-		//Si se presiona el botón mientras está andando el 'log', permite compartir en forma directa
-		//lo que se ha escuchado hasta ahora
-		mRowLogShare.setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View v) {
-				//método que permite compartir lo que he escuchado hasta el minuto
-				doShareCurrent();
-			}
-		});
-
-		//Botón para Scanear creado por mí :)
-		mRowScan.setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View v) {
-				//Llamo al método para scanear señales durante 10 segundos
-				try {
-					scan(10*1000);
-				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					
-				}
-			}
-		});
-
-		//Botón para enviar datos
-		mRowSendData.setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View v) {
-				//Envío datos al servidor
-				try {
-					send_cap();
-				} catch (FileNotFoundException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
 				
-				//send_data();
-				/*
-				try {
-					send_data_json();
-				} catch (UnsupportedEncodingException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				} catch (JSONException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
+				if(isRunning)
+				{
+					//Detener proceso
+					StopObserve();
 				}
-				*/
+				else
+				{
+					//Comenzar proceso
+					isRunning = true;
+					try {
+						run_observe();
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
 			}
 		});
+		
+		installListener();
 		
 		//Actualizo interfaz
 		doUpdateUi();
 	}
 
+	private void StopObserve()
+	{
+		//Detener proceso
+		isRunning = false;
+		systemState = observeState.pause;
+	}
+	
 	@Override
 	public void onNewIntent(Intent intent) {
 		// Replicate USB intents that come in on the single-top task
@@ -638,7 +633,6 @@ public class MainActivity extends Activity {
 
 		String textuse = FileUtils.humanSize(ds);
 
-		mTextManageSmall.setText("Using " + textuse + " in " + nf + " logs");
 	}
 
 	protected void doShowHelp() {
@@ -748,15 +742,47 @@ public class MainActivity extends Activity {
 			doUpdateServiceLogs(null, false);
 			//Actualizo la interfaz (cambio nombres de los botones)
     		doUpdateUi();
+    		
+    		//Envío los datos al servidor
+    		try {
+				send_cap();
+			} catch (FileNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    		
+    		//Espero delta segundo y vuelvo a llamar
+    		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editDeltaScan)).getText().toString());
+    		Handler stopHandler = new Handler();
+    		systemState = observeState.waiting;
+    		stopHandler.postDelayed(ReScan, time);
         }
     };
-    
+
+	//Método para volver a scanear luego de delta time
+	Runnable ReScan = new Runnable() {
+
+        @Override
+        public void run() {
+    		
+        	//Solo hago la llamada si no han apretado stop entremedio
+        	if(isRunning)
+				try {
+					run_observe();
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+        }
+    };
     
     private static final String cap_file = "/android.cap";
 	//Scanea la red durante time mili segundos
 	//Guarda los resultados en un archivo fijo: mLogDir + "/android-" + snow + ".cap"
 	private void scan(long time) throws InterruptedException
 	{
+		systemState = observeState.scanning;
+		
 		//comienzo servidor
 		start(mLogDir + cap_file);
 		//thread que maneja la finalización del scaneo
@@ -765,23 +791,30 @@ public class MainActivity extends Activity {
 	}
 
 	private static final String URL_HISTORY = "http://10.201.41.171:3000/histories.json"; 
-			//"http://observe-web.herokuapp.com/histories";
-	private static final String URL_CAP = "http://192.168.50.33:3000/histories/upload.json"; 
 	private static AsyncHttpClient client = new AsyncHttpClient();
 
 	/* Envío el archivo cap al servidor */
 	private void send_cap() throws FileNotFoundException
 	{	
+		systemState = observeState.sending;
+		
+		
+		String user = ((EditText)findViewById(R.id.editTextUser)).getText().toString();
+		String pass = ((EditText)findViewById(R.id.editTextPass)).getText().toString();
+		String ip = ((EditText)findViewById(R.id.editTextIpServer)).getText().toString();
+		String port = ((EditText)findViewById(R.id.editPortServer)).getText().toString();
+		String url = ip + ":" + port + "/histories/upload.json";
+		
 	    //Defino tupla que quiero crear
 		RequestParams params = new RequestParams();
 	    Map<String, String> map = new HashMap<String, String>();
-	    map.put("usr", "Tablet Copec 1");
-	    map.put("pass", "t1");
+	    map.put("usr", user);
+	    map.put("pass",  pass);
 	    params.put("tablet", map);
 	    params.put("cap", new File(mLogDir + cap_file));
 	    
 	    //Envío mi tupla
-	    client.post(URL_CAP, params, new AsyncHttpResponseHandler() {
+	    client.post(url, params, new AsyncHttpResponseHandler() {
 	        @Override
 	        public void onSuccess(String response) {
 	            Log.w("async", "success!!!!");
@@ -792,12 +825,23 @@ public class MainActivity extends Activity {
 	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
 	        {
 	        	mTextSendStatus.setText(statusCode + " fail");
+	        	//Detengo observe porque la comunicación falló o lo sigo intentando(?)
+	        	//StopObserve();
 	        }
 
 
 	    });
 	}
 
+	private void run_observe() throws InterruptedException
+	{
+		//Obtengo el tiempo
+		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editTimeScan)).getText().toString());
+		
+		//Escaneo
+		scan(time);
+		
+	} 
 	
 	private void send_data_json() throws JSONException, UnsupportedEncodingException
 	{
@@ -815,7 +859,6 @@ public class MainActivity extends Activity {
 	    
 	    StringEntity entity = new StringEntity(total.toString());
         
-	    mTextScan.setText(total.toString());
 	    
 	    //params.put("picture[name]","MyPictureName");
 	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
@@ -825,7 +868,7 @@ public class MainActivity extends Activity {
 	        @Override
 	        public void onSuccess(String response) {
 	            Log.w("async", "success!!!!");
-	            mTextScan.setText("entre");
+	            mTextSendStatus.setText(response + " ok");
 	        } 
 	        
 	        @Override
@@ -853,7 +896,6 @@ public class MainActivity extends Activity {
 	    map.put("congestion", "999");
 	    params.put("history", map);
 
-	    mTextScan.setText(params.toString());
 	    
 	    //params.put("picture[name]","MyPictureName");
 	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
@@ -863,7 +905,7 @@ public class MainActivity extends Activity {
 	        @Override
 	        public void onSuccess(String response) {
 	            Log.w("async", "success!!!!");
-	            mTextScan.setText("entre");
+	            mTextSendStatus.setText(response + " ok");
 	        } 
 	        
 	        @Override
@@ -876,5 +918,43 @@ public class MainActivity extends Activity {
 	    });
 	}
 
+	//Método para monitorear el estado de conexión a Internet
+	private void installListener() {
+
+        if (broadcastReceiver == null) {
+
+            broadcastReceiver = new BroadcastReceiver() {
+
+                @Override
+                public void onReceive(Context context, Intent intent) {
+
+                    Bundle extras = intent.getExtras();
+
+                    NetworkInfo info = (NetworkInfo) extras
+                            .getParcelable("networkInfo");
+
+                    State state = info.getState();
+                    Log.d("InternalBroadcastReceiver", info.toString() + " "
+                            + state.toString());
+
+                    if (state == State.CONNECTED) {
+                    	//Intenet está OK
+                    	InternetConnection = true;
+
+                    } else {
+                    	//No tengo internet
+                    	InternetConnection = false;
+                    }
+
+                }
+            };
+
+            final IntentFilter intentFilter = new IntentFilter();
+            intentFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+            registerReceiver(broadcastReceiver, intentFilter);
+            
+            doUpdateUi();
+        }
+    }
 
 }
