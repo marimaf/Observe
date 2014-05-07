@@ -28,7 +28,7 @@
     <string name="default_user">Tablet_Copec_1</string>
     <string name="default_pass">t1</string>
     <string name="default_scan_delta">30</string>
-    <string name="default_scan_time">10</string>
+    <string name="default_scan_time">60</string>
     
     
     <color name="sidebar">#505050</color>

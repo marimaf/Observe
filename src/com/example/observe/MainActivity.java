@@ -43,13 +43,16 @@ import android.os.Messenger;
 import android.os.RemoteException;
 import android.preference.PreferenceManager;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TableRow;
 import android.widget.TextView;
+import android.widget.TextView.OnEditorActionListener;
 
 
 public class MainActivity extends Activity { 
@@ -751,11 +754,9 @@ public class MainActivity extends Activity {
 				e.printStackTrace();
 			}
     		
-    		//Espero delta segundo y vuelvo a llamar
-    		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editDeltaScan)).getText().toString());
-    		Handler stopHandler = new Handler();
-    		systemState = observeState.waiting;
-    		stopHandler.postDelayed(ReScan, time);
+    		//Antes aquí llamaba al módulo q esperaba y volvía a escuchar
+    		//Ahora espero luego de la respuesta del server
+    		//wait_and_rescan()
         }
     };
 
@@ -793,11 +794,20 @@ public class MainActivity extends Activity {
 	private static final String URL_HISTORY = "http://10.201.41.171:3000/histories.json"; 
 	private static AsyncHttpClient client = new AsyncHttpClient();
 
+	//Método para esperar el tiempo apropiado y luego rescanear
+	private void wait_and_rescan()
+	{
+		//Espero delta segundo y vuelvo a llamar
+		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editDeltaScan)).getText().toString());
+		Handler stopHandler = new Handler();
+		systemState = observeState.waiting;
+		stopHandler.postDelayed(ReScan, time);
+	}
+	
 	/* Envío el archivo cap al servidor */
 	private void send_cap() throws FileNotFoundException
 	{	
 		systemState = observeState.sending;
-		
 		
 		String user = ((EditText)findViewById(R.id.editTextUser)).getText().toString();
 		String pass = ((EditText)findViewById(R.id.editTextPass)).getText().toString();
@@ -819,6 +829,7 @@ public class MainActivity extends Activity {
 	        public void onSuccess(String response) {
 	            Log.w("async", "success!!!!");
 	            mTextSendStatus.setText(response + " ok");
+	            wait_and_rescan();
 	        } 
 	        
 	        @Override
@@ -827,6 +838,7 @@ public class MainActivity extends Activity {
 	        	mTextSendStatus.setText(statusCode + " fail");
 	        	//Detengo observe porque la comunicación falló o lo sigo intentando(?)
 	        	//StopObserve();
+	        	wait_and_rescan();
 	        }
 
 
@@ -957,4 +969,5 @@ public class MainActivity extends Activity {
         }
     }
 
+	
 }
