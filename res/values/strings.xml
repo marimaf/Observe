@@ -9,6 +9,7 @@
     <string name="title_activity_main">Pcap Capture</string>
     <string name="title_activity_filemanager">File Manager</string>
     <string name="pcap_service_desc">Pcap background service</string>
+    <string name="observe_service_desc">Observe background service</string>
     
     <string name="pref_channel">Channel Preferences</string>
     
@@ -28,7 +29,7 @@
     <string name="default_user">Tablet_Copec_1</string>
     <string name="default_pass">t1</string>
     <string name="default_scan_delta">30</string>
-    <string name="default_scan_time">60</string>
+    <string name="default_scan_time">10</string>
     
     
     <color name="sidebar">#505050</color>

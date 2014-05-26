@@ -75,8 +75,10 @@ public class PcapService extends Service {
 		public void run() {
 			if (mShutdown) return;
 			
+			//Envío notificaciones a mis clientes con el estado de la antena
 			sendLogStateBundle();
 			
+			//Espero 1 segundo y vuelvo a llamar a sendLogStateBundle()
 			mTimeHandler.postDelayed(this, 1000);
 		}
 	};
@@ -101,6 +103,7 @@ public class PcapService extends Service {
 		}
 	};
 	
+	// Este es el que maneja los requests que se le hacen al server
 	class IncomingServiceHandler extends Handler {
 		@Override
 		public void handleMessage(Message msg) {

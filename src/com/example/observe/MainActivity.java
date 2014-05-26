@@ -111,6 +111,604 @@ public class MainActivity extends Activity {
 	private int mChannelLock;
 	ArrayList<Integer> mChannelList = new ArrayList<Integer>();
 
+	//Actualiza la interfaz gráfica
+	// variable 'mUsbPresent' indica si conectó la antena
+	private void doUpdateUi() {
+		
+		//Actualizo conexión a internet
+        if (InternetConnection)
+        	mTextWifiConnection.setText("Ok");
+        else
+        	mTextWifiConnection.setText("No Internet access");
+        
+		if (!mUsbPresent) {
+			mTextDashUsbSmall.setText("No USB device present");
+
+		} else {
+			mTextDashUsbSmall.setText(mUsbInfo);
+			mTextDashUsbSmall.setVisibility(View.VISIBLE);
+		}
+
+		if (!mLogging) {
+			mTextDashFileSmall.setText("");
+			mTextDashFileSmall.setVisibility(View.GONE);
+		} else {
+			mTextDashFileSmall.setVisibility(View.VISIBLE);
+		}
+
+		if (mLogCount > 0 || mLogging) {
+			String sz = "0B";
+
+			if (mLogSize < 1024) {
+				sz = String.format("%dB", mLogSize);
+			} else if (mLogSize < (1024 * 1024)) {
+				sz = String.format("%2.2fK", ((float) mLogSize) / 1024);
+			} else if (mLogSize < (1024 * 1024 * 1024)) {
+				sz = String.format("%5.2fM", ((float) mLogSize) / (1024 * 1024));
+			}
+
+			mTextDashFileSmall.setText(sz + ", " + mLogCount + " packets");
+		} else {
+			mTextDashFileSmall.setText("");
+		}
+
+		//Dejo actuvo el botón solo si tengo conexión a internet, hay una antena conectada y estoy
+		//en waiting o en pause
+		btStartStop.setEnabled(InternetConnection && mUsbPresent && 
+				(systemState == observeState.pause || systemState == observeState.waiting));
+		if(!isRunning)
+			btStartStop.setText("Start");
+		else
+			btStartStop.setText("Stop");
+		
+		//Actualizo estado de observe
+		if(systemState == observeState.pause)
+			mTextState.setText("Paused");
+		if(systemState == observeState.scanning)
+			mTextState.setText("Scanning");
+		if(systemState == observeState.sending)
+			mTextState.setText("Send data server");
+		if(systemState == observeState.waiting)
+			mTextState.setText("Waiting");
+		
+		
+		doUpdateFilesizes();
+	}
+
+	//Método por el que todo parte
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+
+		// Don't launch a second copy from the USB intent
+		if (!isTaskRoot()) {
+			final Intent intent = getIntent();
+			final String intentAction = intent.getAction(); 
+			if (intent.hasCategory(Intent.CATEGORY_LAUNCHER) && intentAction != null && intentAction.equals(Intent.ACTION_MAIN)) {
+				Log.w(LOGTAG, "Main Activity is not the root.  Finishing Main Activity instead of launching.");
+				finish();
+				return;
+			}
+		}
+
+		mContext = this;
+
+		//Uso memoria por defecto asignada a la aplicación para guardar y ver las preferencias del usuario
+		mPreferences = PreferenceManager.getDefaultSharedPreferences(mContext);
+
+		setContentView(R.layout.activity_main);
+
+		btStartStop = (Button) findViewById(R.id.buttonStartStop);
+
+		mTextState = (TextView) findViewById(R.id.textObserveState);
+		mTextDashUsbSmall = (TextView) findViewById(R.id.textDashUsbDevice);
+		mTextWifiConnection = (TextView) findViewById(R.id.textWifiState);
+		mTextDashFileSmall = (TextView) findViewById(R.id.textDashFileSmall);
+		mTextDashHardware = (TextView) findViewById(R.id.textDashHardware);
+		mTextSendStatus = (TextView) findViewById(R.id.textServer);
+		
+		mRowHardware = (TableRow) findViewById(R.id.tableRowHardware);
+		
+        if (Build.MANUFACTURER.equals("motorola")) {
+        	mTextDashHardware.setText("Motorola hardware has limitations on USB (special power " +
+        			"injectors are needed), check the Help window for a link to more info.");
+        	mRowHardware.setVisibility(View.VISIBLE);
+        }
+
+        /*Al parecer esto se preocupa de hacer la conexión con la antena
+          De hecho creo que esa es al función de la clase PcapService
+          Es una clase 'extends Service'; (http://developer.android.com/reference/android/app/Service.html)
+          Los servicios son para ejecutar una acción en background... similar a un thread solo que es parte de la
+          secuencia principal del programa. Se usan para dejar ejecutando código incluso cuando el usuario no
+          interactúa con la aplicación (por lo tanto se usan para hacer cosas en background (Context.startService()) y
+          para proveer servicios a otras aplicaciones (Context.bindService()))
+          
+          Al crear un server se llama a su método onCreate(); y al hacer Context.startService() se llama a onStartCommand()
+          se seguirá ejecutando hasta un Context.stopService() o stopSelf()
+          
+          Si se hace un Context.bindService(), se llama a onBind(Intent) que retorna una interfaz para que sea posible 
+          comunicarse con el servidor... en este caso parece que el código lanza el servicio de conexión con la antena
+          y además lo accede mediante bindService()
+        */
+		Intent svc = new Intent(this, PcapService.class);
+		// Context.startService() (Activity hereda de context)
+		startService(svc);
+		doBindService();
+
+		//Pido acceso al USB
+		mPermissionIntent = PendingIntent.getBroadcast(mContext, 0, new Intent(PcapService.ACTION_USB_PERMISSION), 0);
+
+		IntentFilter filter = new IntentFilter(PcapService.ACTION_USB_PERMISSION);
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+		mContext.registerReceiver(mUsbReceiver, filter);
+
+		//Las preferencias se refieren a los canales por los que escucho
+		//Son del 1 al 11... creo que nos interesa solo el 11 pero por ahora lo dejaré con todos
+		//También define el directorio donde se guardan las cosas: "/mnt/sdcard/pcap"
+		//La variable mpreference es memoria del tipo SharedPreferences para guardar
+		//las preferencias del usuario fácil
+		doUpdatePrefs();
+
+		// make the directory on the sdcard
+		// Abro-Creo directorio "/mnt/sdcard/pcap" para guardar la info (es memoria externa)
+		File f = new File(mLogDir);
+		if (!f.exists()) {
+			f.mkdir();
+		}
+
+		/*
+		FilelistFragment list = (FilelistFragment) getFragmentManager().findFragmentById(R.id.fragment_filelist);
+		list.registerFiletype("cap", new PcapFileTyper());
+		list.setDirectory(new File(mLogDir));
+		list.setRefreshTimer(2000);
+		list.setFavorites(true);
+		list.Populate();
+		 */
+		// getFragmentManager().beginTransaction().add(R.id.fragment_filelist, list).commit();
+		
+		//Botón de inicio
+		btStartStop.setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				
+				if(isRunning)
+				{
+					//Detener proceso
+					StopObserve();
+				}
+				else
+				{
+					//Comenzar proceso
+					isRunning = true;
+					try {
+						run_observe();
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			}
+		});
+		
+		installListener();
+		
+		//Actualizo interfaz
+		doUpdateUi();
+	}
+
+	private void StopObserve()
+	{
+		//Detener proceso
+		if(stopRescanHandler != null)
+			stopRescanHandler.removeCallbacks(ReScan);
+		isRunning = false;
+		systemState = observeState.pause;
+	}
+	
+	@Override
+	public void onNewIntent(Intent intent) {
+		// Replicate USB intents that come in on the single-top task
+		mUsbReceiver.onReceive(this, intent);
+	}
+
+	@Override
+	public void onStop() {
+		super.onStop();
+	}
+
+	@Override
+	public void onDestroy() {
+		super.onDestroy();
+
+		mContext.unregisterReceiver(mUsbReceiver);
+		doUnbindService();
+	}
+
+	@Override 
+	public void onPause() {
+		super.onPause();
+
+		// Log.d(LOGTAG, "Onpause");
+		// doUnbindService();
+	}
+
+	@Override
+	public void onResume() {
+		super.onResume();
+
+		// Log.d(LOGTAG, "Onresume");
+		// doBindService();
+	}
+
+	//Actualiza información referente a los canales que el usuario quiere escuchar
+	@Override
+	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        Log.d(LOGTAG, "Got activity req " + Integer.toString(requestCode)
+                + " result code " + Integer.toString(resultCode));
+
+		if (requestCode == PREFS_REQ) {
+			//Lo curioso es que no pareciera usar la información que le llega en data
+			//lo que hace es que en la interfaz realiza los cambios en el archivo de 
+			//preferencias compartido: mPreferences
+			//por lo que simplemente usa este método para saber que se realizó un cambio en la configuración
+			doUpdatePrefs();
+			doUpdateUi();
+			doUpdateServiceprefs();
+		}
+
+	}
+
+	/***
+	 * Creo que este método es inútil :S
+	 */
+	protected void doUpdateFilesizes() {
+		long ds = FileUtils.countFileSizes(new File(mLogDir), new String[] { "cap" }, 
+				false, false, null);
+		long nf = FileUtils.countFiles(new File(mLogDir), new String[] { "cap" }, 
+				false, false, null);
+
+		String textuse = FileUtils.humanSize(ds);
+
+	}
+
+	protected void doShowHelp() {
+		AlertDialog.Builder alert = new AlertDialog.Builder(mContext);
+
+		WebView wv = new WebView(this);
+		
+		wv.loadUrl("file:///android_asset/html_no_copy/PcapCaptureHelp.html");
+
+		wv.setWebViewClient(new WebViewClient() {
+			@Override
+			public boolean shouldOverrideUrlLoading(WebView view, String url) {
+				Uri uri = Uri.parse(url);
+				Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+				startActivity(intent);
+				
+				return true;
+			}
+		});
+
+		alert.setView(wv);
+		
+		alert.setNegativeButton("Close", new DialogInterface.OnClickListener() {
+			@Override
+			public void onClick(DialogInterface dialog, int id) {
+			}
+		});
+		
+		alert.show();
+	}
+	
+	//Método que permite compartir lo que se está escuchando
+	//da 3 opciones: dejar de escuchar y compartir, compartir, o cancelar
+	protected void doShareCurrent() {
+		AlertDialog.Builder alertbox = new AlertDialog.Builder(mContext);
+
+		alertbox.setTitle("Share current pcap?");
+
+		alertbox.setMessage("Sharing the active log can result in truncated log files.  This " +
+				"should not cause a problem with most log processors, but for maximum safety, " +
+		"you should stop logging first.");
+
+		//Si cancelo no pasa nada
+		alertbox.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+			public void onClick(DialogInterface arg0, int arg1) {
+			}
+		});
+
+		//Si comparto me voy a la vista de compartir
+		alertbox.setPositiveButton("Share", new DialogInterface.OnClickListener() {
+			public void onClick(DialogInterface arg0, int arg1) {
+				Intent i = new Intent(Intent.ACTION_SEND); 
+				i.setType("application/cap"); 
+				i.putExtra(Intent.EXTRA_STREAM, Uri.parse("file://" + mLogPath)); 
+				startActivity(Intent.createChooser(i, "Share Pcap file"));
+			}
+		});
+
+		//Si detengo y comparto, llamo a doUpdateServiceLogs(mLogPath.toString(), false); para dejar de escuchar
+		alertbox.setNeutralButton("Stop and Share", new DialogInterface.OnClickListener() {
+			public void onClick(DialogInterface arg0, int arg1) {
+				mShareOnStop = true;
+				mOldLogPath = mLogPath;
+				doUpdateServiceLogs(mLogPath.toString(), false);
+			}
+		});
+
+		alertbox.show();
+
+		/*
+		 */
+	}
+
+	/* -------------------------------------------------------------------------------- */
+	/* Nuevos métodos en busca de generar un buen encapsulamiento para el método 'scan' */
+	/* -------------------------------------------------------------------------------- */
+	
+	//Recive una lista con los canales que queremos escuchar (del 1 al 11) 
+	private void config(List<Integer> prefs)
+	{
+		//Actualizo preferencias en archivo interno
+		for (int c = 1; c <= 11; c++) 
+			mPreferences.edit().putBoolean(PREF_CHANPREFIX + Integer.toString(c), prefs.contains(c));
+		//Actualizo nuevas preferencias en todos lados (incluido en la antena)
+		doUpdatePrefs();
+		doUpdateUi();
+		doUpdateServiceprefs();
+	}
+		
+	//Comienzo servidor
+	private void start(String path)
+	{
+		mLocalLogging = true;
+		mLogPath = new File(path);
+		doUpdateServiceLogs(mLogPath.toString(), true);
+		//Actualizo la interfaz (cambio nombres de los botones)
+		doUpdateUi();
+	}
+	
+	//Permite detener el servidor
+	Runnable stopServer = new Runnable() {
+
+        @Override
+        public void run() {
+    		
+        	mLocalLogging = false;
+			doUpdateServiceLogs(null, false);
+			//Actualizo la interfaz (cambio nombres de los botones)
+    		doUpdateUi();
+    		
+    		//Envío los datos al servidor
+    		try {
+				send_cap();
+			} catch (FileNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    		
+    		//Antes aquí llamaba al módulo q esperaba y volvía a escuchar
+    		//Ahora espero luego de la respuesta del server
+    		//wait_and_rescan()
+        }
+    };
+
+	//Método para volver a scanear luego de delta time
+	Runnable ReScan = new Runnable() {
+
+        @Override
+        public void run() {
+    		
+        	//Solo hago la llamada si no han apretado stop entremedio
+        	if(isRunning)
+				try {
+					run_observe();
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+        }
+    };
+    
+    private static final String cap_file = "/android.cap";
+	//Scanea la red durante time mili segundos
+	//Guarda los resultados en un archivo fijo: mLogDir + "/android-" + snow + ".cap"
+	private void scan(long time) throws InterruptedException
+	{
+		systemState = observeState.scanning;
+		
+		//comienzo servidor
+		start(mLogDir + cap_file);
+		//thread que maneja la finalización del scaneo
+		Handler stopHandler = new Handler();
+		stopHandler.postDelayed(stopServer, time);
+	}
+
+	private static final String URL_HISTORY = "http://10.201.41.171:3000/histories.json"; 
+	private static AsyncHttpClient client = new AsyncHttpClient();
+
+	private Handler stopRescanHandler;
+	//Método para esperar el tiempo apropiado y luego rescanear
+	private void wait_and_rescan()
+	{
+		//Espero delta segundo y vuelvo a llamar
+		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editDeltaScan)).getText().toString());
+		stopRescanHandler = new Handler();
+		systemState = observeState.waiting;
+		stopRescanHandler.postDelayed(ReScan, time);
+	}
+	
+	/* Envío el archivo cap al servidor */
+	private void send_cap() throws FileNotFoundException
+	{	
+		systemState = observeState.sending;
+		
+		String user = ((EditText)findViewById(R.id.editTextUser)).getText().toString();
+		String pass = ((EditText)findViewById(R.id.editTextPass)).getText().toString();
+		String ip = ((EditText)findViewById(R.id.editTextIpServer)).getText().toString();
+		String port = ((EditText)findViewById(R.id.editPortServer)).getText().toString();
+		String url = ip + ":" + port + "/histories/upload.json";
+		
+	    //Defino tupla que quiero crear
+		RequestParams params = new RequestParams();
+	    Map<String, String> map = new HashMap<String, String>();
+	    map.put("usr", user);
+	    map.put("pass",  pass);
+	    params.put("tablet", map);
+	    params.put("cap", new File(mLogDir + cap_file));
+	    
+	    //Envío mi tupla
+	    client.post(url, params, new AsyncHttpResponseHandler() {
+	        @Override
+	        public void onSuccess(String response) {
+	            Log.w("async", "success!!!!");
+	            mTextSendStatus.setText(response + " ok");
+	            wait_and_rescan();
+	        } 
+	        
+	        @Override
+	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
+	        {
+	        	mTextSendStatus.setText(statusCode + " fail");
+	        	//Detengo observe porque la comunicación falló o lo sigo intentando(?)
+	        	//StopObserve();
+	        	wait_and_rescan();
+	        }
+
+
+	    });
+	}
+
+	private void run_observe() throws InterruptedException
+	{
+		//Obtengo el tiempo
+		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editTimeScan)).getText().toString());
+		
+		//Escaneo
+		scan(time);
+		
+	} 
+	
+	private void send_data_json() throws JSONException, UnsupportedEncodingException
+	{
+		//Defino tupla que quiero crear
+		JSONObject params = new JSONObject();
+        params.put("id_tablet", "1");
+	    params.put("sampling_time(1i)", "2015");
+	    params.put("sampling_time(2i)", "4");
+	    params.put("sampling_time(3i)", "6");
+	    params.put("sampling_time(4i)", "0");
+	    params.put("sampling_time(5i)", "5");
+	    params.put("congestion", "999");
+	    JSONObject total = new JSONObject();
+	    total.put("history", params);
+	    
+	    StringEntity entity = new StringEntity(total.toString());
+        
+	    
+	    //params.put("picture[name]","MyPictureName");
+	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
+	    
+	    //Envío mi tupla
+	    client.post(this, URL_HISTORY, entity, "application/json", new AsyncHttpResponseHandler() {
+	        @Override
+	        public void onSuccess(String response) {
+	            Log.w("async", "success!!!!");
+	            mTextSendStatus.setText(response + " ok");
+	        } 
+	        
+	        @Override
+	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
+	        {
+	        	//mTextScan.setText(statusCode + " fallo");
+	        }
+
+
+	    });
+	}
+	
+	private void send_data()
+	{
+
+	    //Defino tupla que quiero crear
+		RequestParams params = new RequestParams();
+	    Map<String, String> map = new HashMap<String, String>();
+	    map.put("id_tablet", "1");
+	    map.put("sampling_time(1i)", "2015");
+	    map.put("sampling_time(2i)", "4");
+	    map.put("sampling_time(3i)", "6");
+	    map.put("sampling_time(4i)", "00");
+	    map.put("sampling_time(5i)", "05");
+	    map.put("congestion", "999");
+	    params.put("history", map);
+
+	    
+	    //params.put("picture[name]","MyPictureName");
+	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
+	    
+	    //Envío mi tupla
+	    client.post(URL_HISTORY, params, new AsyncHttpResponseHandler() {
+	        @Override
+	        public void onSuccess(String response) {
+	            Log.w("async", "success!!!!");
+	            mTextSendStatus.setText(response + " ok");
+	        } 
+	        
+	        @Override
+	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
+	        {
+	        	//mTextScan.setText(statusCode + " fallo");
+	        }
+
+
+	    });
+	}
+
+	//Método para monitorear el estado de conexión a Internet
+	private void installListener() {
+
+        if (broadcastReceiver == null) {
+
+            broadcastReceiver = new BroadcastReceiver() {
+
+                @Override
+                public void onReceive(Context context, Intent intent) {
+
+                    Bundle extras = intent.getExtras();
+
+                    NetworkInfo info = (NetworkInfo) extras
+                            .getParcelable("networkInfo");
+
+                    State state = info.getState();
+                    Log.d("InternalBroadcastReceiver", info.toString() + " "
+                            + state.toString());
+
+                    if (state == State.CONNECTED) {
+                    	//Intenet está OK
+                    	InternetConnection = true;
+
+                    } else {
+                    	//No tengo internet
+                    	InternetConnection = false;
+                    }
+
+                }
+            };
+
+            final IntentFilter intentFilter = new IntentFilter();
+            intentFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+            registerReceiver(broadcastReceiver, intentFilter);
+            
+            doUpdateUi();
+        }
+    }
+
+	
+	
+	/* Métodos y clases para la antena */
+	
+	//Maneja los mensajes que le envía el servidor (actualizaciones del estado de la antena)
 	class IncomingServiceHandler extends Handler {
 		@Override
 		public void handleMessage(Message msg) {
@@ -382,592 +980,5 @@ public class MainActivity extends Activity {
 		}
 	};
 
-	//Actualiza la interfaz gráfica
-	// variable 'mUsbPresent' indica si conectó la antena
-	private void doUpdateUi() {
-		
-		//Actualizo conexión a internet
-        if (InternetConnection)
-        	mTextWifiConnection.setText("Ok");
-        else
-        	mTextWifiConnection.setText("No Internet access");
-        
-		if (!mUsbPresent) {
-			mTextDashUsbSmall.setText("No USB device present");
 
-		} else {
-			mTextDashUsbSmall.setText(mUsbInfo);
-			mTextDashUsbSmall.setVisibility(View.VISIBLE);
-		}
-
-		if (!mLogging) {
-			mTextDashFileSmall.setText("");
-			mTextDashFileSmall.setVisibility(View.GONE);
-		} else {
-			mTextDashFileSmall.setVisibility(View.VISIBLE);
-		}
-
-		if (mLogCount > 0 || mLogging) {
-			String sz = "0B";
-
-			if (mLogSize < 1024) {
-				sz = String.format("%dB", mLogSize);
-			} else if (mLogSize < (1024 * 1024)) {
-				sz = String.format("%2.2fK", ((float) mLogSize) / 1024);
-			} else if (mLogSize < (1024 * 1024 * 1024)) {
-				sz = String.format("%5.2fM", ((float) mLogSize) / (1024 * 1024));
-			}
-
-			mTextDashFileSmall.setText(sz + ", " + mLogCount + " packets");
-		} else {
-			mTextDashFileSmall.setText("");
-		}
-
-		//Dejo actuvo el botón solo si tengo conexión a internet, hay una antena conectada y estoy
-		//en waiting o en pause
-		btStartStop.setEnabled(InternetConnection && mUsbPresent && 
-				(systemState == observeState.pause || systemState == observeState.waiting));
-		if(!isRunning)
-			btStartStop.setText("Start");
-		else
-			btStartStop.setText("Stop");
-		
-		//Actualizo estado de observe
-		if(systemState == observeState.pause)
-			mTextState.setText("Paused");
-		if(systemState == observeState.scanning)
-			mTextState.setText("Scanning");
-		if(systemState == observeState.sending)
-			mTextState.setText("Send data server");
-		if(systemState == observeState.waiting)
-			mTextState.setText("Waiting");
-		
-		
-		doUpdateFilesizes();
-	}
-
-	//Método por el que todo parte
-	@Override
-	public void onCreate(Bundle savedInstanceState) {
-		super.onCreate(savedInstanceState);
-
-		// Don't launch a second copy from the USB intent
-		if (!isTaskRoot()) {
-			final Intent intent = getIntent();
-			final String intentAction = intent.getAction(); 
-			if (intent.hasCategory(Intent.CATEGORY_LAUNCHER) && intentAction != null && intentAction.equals(Intent.ACTION_MAIN)) {
-				Log.w(LOGTAG, "Main Activity is not the root.  Finishing Main Activity instead of launching.");
-				finish();
-				return;
-			}
-		}
-
-		mContext = this;
-
-		//Uso memoria por defecto asignada a la aplicación para guardar y ver las preferencias del usuario
-		mPreferences = PreferenceManager.getDefaultSharedPreferences(mContext);
-
-		setContentView(R.layout.activity_main);
-
-		btStartStop = (Button) findViewById(R.id.buttonStartStop);
-
-		mTextState = (TextView) findViewById(R.id.textObserveState);
-		mTextDashUsbSmall = (TextView) findViewById(R.id.textDashUsbDevice);
-		mTextWifiConnection = (TextView) findViewById(R.id.textWifiState);
-		mTextDashFileSmall = (TextView) findViewById(R.id.textDashFileSmall);
-		mTextDashHardware = (TextView) findViewById(R.id.textDashHardware);
-		mTextSendStatus = (TextView) findViewById(R.id.textServer);
-		
-		mRowHardware = (TableRow) findViewById(R.id.tableRowHardware);
-		
-        if (Build.MANUFACTURER.equals("motorola")) {
-        	mTextDashHardware.setText("Motorola hardware has limitations on USB (special power " +
-        			"injectors are needed), check the Help window for a link to more info.");
-        	mRowHardware.setVisibility(View.VISIBLE);
-        }
-
-        /*Al parecer esto se preocupa de hacer la conexión con la antena
-          De hecho creo que esa es al función de la clase PcapService
-          Es una clase 'extends Service'; (http://developer.android.com/reference/android/app/Service.html)
-          Los servicios son para ejecutar una acción en background... similar a un thread solo que es parte de la
-          secuencia principal del programa. Se usan para dejar ejecutando código incluso cuando el usuario no
-          interactúa con la aplicación (por lo tanto se usan para hacer cosas en background (Context.startService()) y
-          para proveer servicios a otras aplicaciones (Context.bindService()))
-          
-          Al crear un server se llama a su método onCreate(); y al hacer Context.startService() se llama a onStartCommand()
-          se seguirá ejecutando hasta un Context.stopService() o stopSelf()
-          
-          Si se hace un Context.bindService(), se llama a onBind(Intent) que retorna una interfaz para que sea posible 
-          comunicarse con el servidor... en este caso parece que el código lanza el servicio de conexión con la antena
-          y además lo accede mediante bindService()
-        */
-		Intent svc = new Intent(this, PcapService.class);
-		// Context.startService() (Activity hereda de context)
-		startService(svc);
-		doBindService();
-
-		//Pido acceso al USB
-		mPermissionIntent = PendingIntent.getBroadcast(mContext, 0, new Intent(PcapService.ACTION_USB_PERMISSION), 0);
-
-		IntentFilter filter = new IntentFilter(PcapService.ACTION_USB_PERMISSION);
-		filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
-		filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-		mContext.registerReceiver(mUsbReceiver, filter);
-
-		//Las preferencias se refieren a los canales por los que escucho
-		//Son del 1 al 11... creo que nos interesa solo el 11 pero por ahora lo dejaré con todos
-		//También define el directorio donde se guardan las cosas: "/mnt/sdcard/pcap"
-		//La variable mpreference es memoria del tipo SharedPreferences para guardar
-		//las preferencias del usuario fácil
-		doUpdatePrefs();
-
-		// make the directory on the sdcard
-		// Abro-Creo directorio "/mnt/sdcard/pcap" para guardar la info (es memoria externa)
-		File f = new File(mLogDir);
-		if (!f.exists()) {
-			f.mkdir();
-		}
-
-		/*
-		FilelistFragment list = (FilelistFragment) getFragmentManager().findFragmentById(R.id.fragment_filelist);
-		list.registerFiletype("cap", new PcapFileTyper());
-		list.setDirectory(new File(mLogDir));
-		list.setRefreshTimer(2000);
-		list.setFavorites(true);
-		list.Populate();
-		 */
-		// getFragmentManager().beginTransaction().add(R.id.fragment_filelist, list).commit();
-		
-		//Botón de inicio
-		btStartStop.setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View v) {
-				
-				if(isRunning)
-				{
-					//Detener proceso
-					StopObserve();
-				}
-				else
-				{
-					//Comenzar proceso
-					isRunning = true;
-					try {
-						run_observe();
-					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
-				}
-			}
-		});
-		
-		installListener();
-		
-		//Actualizo interfaz
-		doUpdateUi();
-	}
-
-	private void StopObserve()
-	{
-		//Detener proceso
-		isRunning = false;
-		systemState = observeState.pause;
-	}
-	
-	@Override
-	public void onNewIntent(Intent intent) {
-		// Replicate USB intents that come in on the single-top task
-		mUsbReceiver.onReceive(this, intent);
-	}
-
-	@Override
-	public void onStop() {
-		super.onStop();
-	}
-
-	@Override
-	public void onDestroy() {
-		super.onDestroy();
-
-		mContext.unregisterReceiver(mUsbReceiver);
-		doUnbindService();
-	}
-
-	@Override 
-	public void onPause() {
-		super.onPause();
-
-		// Log.d(LOGTAG, "Onpause");
-		// doUnbindService();
-	}
-
-	@Override
-	public void onResume() {
-		super.onResume();
-
-		// Log.d(LOGTAG, "Onresume");
-		// doBindService();
-	}
-
-	//Actualiza información referente a los canales que el usuario quiere escuchar
-	@Override
-	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        Log.d(LOGTAG, "Got activity req " + Integer.toString(requestCode)
-                + " result code " + Integer.toString(resultCode));
-
-		if (requestCode == PREFS_REQ) {
-			//Lo curioso es que no pareciera usar la información que le llega en data
-			//lo que hace es que en la interfaz realiza los cambios en el archivo de 
-			//preferencias compartido: mPreferences
-			//por lo que simplemente usa este método para saber que se realizó un cambio en la configuración
-			doUpdatePrefs();
-			doUpdateUi();
-			doUpdateServiceprefs();
-		}
-
-	}
-
-	protected void doUpdateFilesizes() {
-		long ds = FileUtils.countFileSizes(new File(mLogDir), new String[] { "cap" }, 
-				false, false, null);
-		long nf = FileUtils.countFiles(new File(mLogDir), new String[] { "cap" }, 
-				false, false, null);
-
-		String textuse = FileUtils.humanSize(ds);
-
-	}
-
-	protected void doShowHelp() {
-		AlertDialog.Builder alert = new AlertDialog.Builder(mContext);
-
-		WebView wv = new WebView(this);
-		
-		wv.loadUrl("file:///android_asset/html_no_copy/PcapCaptureHelp.html");
-
-		wv.setWebViewClient(new WebViewClient() {
-			@Override
-			public boolean shouldOverrideUrlLoading(WebView view, String url) {
-				Uri uri = Uri.parse(url);
-				Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-				startActivity(intent);
-				
-				return true;
-			}
-		});
-
-		alert.setView(wv);
-		
-		alert.setNegativeButton("Close", new DialogInterface.OnClickListener() {
-			@Override
-			public void onClick(DialogInterface dialog, int id) {
-			}
-		});
-		
-		alert.show();
-	}
-	
-	//Método que permite compartir lo que se está escuchando
-	//da 3 opciones: dejar de escuchar y compartir, compartir, o cancelar
-	protected void doShareCurrent() {
-		AlertDialog.Builder alertbox = new AlertDialog.Builder(mContext);
-
-		alertbox.setTitle("Share current pcap?");
-
-		alertbox.setMessage("Sharing the active log can result in truncated log files.  This " +
-				"should not cause a problem with most log processors, but for maximum safety, " +
-		"you should stop logging first.");
-
-		//Si cancelo no pasa nada
-		alertbox.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
-			public void onClick(DialogInterface arg0, int arg1) {
-			}
-		});
-
-		//Si comparto me voy a la vista de compartir
-		alertbox.setPositiveButton("Share", new DialogInterface.OnClickListener() {
-			public void onClick(DialogInterface arg0, int arg1) {
-				Intent i = new Intent(Intent.ACTION_SEND); 
-				i.setType("application/cap"); 
-				i.putExtra(Intent.EXTRA_STREAM, Uri.parse("file://" + mLogPath)); 
-				startActivity(Intent.createChooser(i, "Share Pcap file"));
-			}
-		});
-
-		//Si detengo y comparto, llamo a doUpdateServiceLogs(mLogPath.toString(), false); para dejar de escuchar
-		alertbox.setNeutralButton("Stop and Share", new DialogInterface.OnClickListener() {
-			public void onClick(DialogInterface arg0, int arg1) {
-				mShareOnStop = true;
-				mOldLogPath = mLogPath;
-				doUpdateServiceLogs(mLogPath.toString(), false);
-			}
-		});
-
-		alertbox.show();
-
-		/*
-		 */
-	}
-
-	/* -------------------------------------------------------------------------------- */
-	/* Nuevos métodos en busca de generar un buen encapsulamiento para el método 'scan' */
-	/* -------------------------------------------------------------------------------- */
-	
-	//Recive una lista con los canales que queremos escuchar (del 1 al 11) 
-	private void config(List<Integer> prefs)
-	{
-		//Actualizo preferencias en archivo interno
-		for (int c = 1; c <= 11; c++) 
-			mPreferences.edit().putBoolean(PREF_CHANPREFIX + Integer.toString(c), prefs.contains(c));
-		//Actualizo nuevas preferencias en todos lados (incluido en la antena)
-		doUpdatePrefs();
-		doUpdateUi();
-		doUpdateServiceprefs();
-	}
-		
-	//Comienzo servidor
-	private void start(String path)
-	{
-		mLocalLogging = true;
-		mLogPath = new File(path);
-		doUpdateServiceLogs(mLogPath.toString(), true);
-		//Actualizo la interfaz (cambio nombres de los botones)
-		doUpdateUi();
-	}
-	
-	//Permite detener el servidor
-	Runnable stopServer = new Runnable() {
-
-        @Override
-        public void run() {
-    		
-        	mLocalLogging = false;
-			doUpdateServiceLogs(null, false);
-			//Actualizo la interfaz (cambio nombres de los botones)
-    		doUpdateUi();
-    		
-    		//Envío los datos al servidor
-    		try {
-				send_cap();
-			} catch (FileNotFoundException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-    		
-    		//Antes aquí llamaba al módulo q esperaba y volvía a escuchar
-    		//Ahora espero luego de la respuesta del server
-    		//wait_and_rescan()
-        }
-    };
-
-	//Método para volver a scanear luego de delta time
-	Runnable ReScan = new Runnable() {
-
-        @Override
-        public void run() {
-    		
-        	//Solo hago la llamada si no han apretado stop entremedio
-        	if(isRunning)
-				try {
-					run_observe();
-				} catch (InterruptedException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}
-        }
-    };
-    
-    private static final String cap_file = "/android.cap";
-	//Scanea la red durante time mili segundos
-	//Guarda los resultados en un archivo fijo: mLogDir + "/android-" + snow + ".cap"
-	private void scan(long time) throws InterruptedException
-	{
-		systemState = observeState.scanning;
-		
-		//comienzo servidor
-		start(mLogDir + cap_file);
-		//thread que maneja la finalización del scaneo
-		Handler stopHandler = new Handler();
-		stopHandler.postDelayed(stopServer, time);
-	}
-
-	private static final String URL_HISTORY = "http://10.201.41.171:3000/histories.json"; 
-	private static AsyncHttpClient client = new AsyncHttpClient();
-
-	//Método para esperar el tiempo apropiado y luego rescanear
-	private void wait_and_rescan()
-	{
-		//Espero delta segundo y vuelvo a llamar
-		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editDeltaScan)).getText().toString());
-		Handler stopHandler = new Handler();
-		systemState = observeState.waiting;
-		stopHandler.postDelayed(ReScan, time);
-	}
-	
-	/* Envío el archivo cap al servidor */
-	private void send_cap() throws FileNotFoundException
-	{	
-		systemState = observeState.sending;
-		
-		String user = ((EditText)findViewById(R.id.editTextUser)).getText().toString();
-		String pass = ((EditText)findViewById(R.id.editTextPass)).getText().toString();
-		String ip = ((EditText)findViewById(R.id.editTextIpServer)).getText().toString();
-		String port = ((EditText)findViewById(R.id.editPortServer)).getText().toString();
-		String url = ip + ":" + port + "/histories/upload.json";
-		
-	    //Defino tupla que quiero crear
-		RequestParams params = new RequestParams();
-	    Map<String, String> map = new HashMap<String, String>();
-	    map.put("usr", user);
-	    map.put("pass",  pass);
-	    params.put("tablet", map);
-	    params.put("cap", new File(mLogDir + cap_file));
-	    
-	    //Envío mi tupla
-	    client.post(url, params, new AsyncHttpResponseHandler() {
-	        @Override
-	        public void onSuccess(String response) {
-	            Log.w("async", "success!!!!");
-	            mTextSendStatus.setText(response + " ok");
-	            wait_and_rescan();
-	        } 
-	        
-	        @Override
-	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
-	        {
-	        	mTextSendStatus.setText(statusCode + " fail");
-	        	//Detengo observe porque la comunicación falló o lo sigo intentando(?)
-	        	//StopObserve();
-	        	wait_and_rescan();
-	        }
-
-
-	    });
-	}
-
-	private void run_observe() throws InterruptedException
-	{
-		//Obtengo el tiempo
-		long time = 1000 * Long.parseLong(((EditText)findViewById(R.id.editTimeScan)).getText().toString());
-		
-		//Escaneo
-		scan(time);
-		
-	} 
-	
-	private void send_data_json() throws JSONException, UnsupportedEncodingException
-	{
-		//Defino tupla que quiero crear
-		JSONObject params = new JSONObject();
-        params.put("id_tablet", "1");
-	    params.put("sampling_time(1i)", "2015");
-	    params.put("sampling_time(2i)", "4");
-	    params.put("sampling_time(3i)", "6");
-	    params.put("sampling_time(4i)", "0");
-	    params.put("sampling_time(5i)", "5");
-	    params.put("congestion", "999");
-	    JSONObject total = new JSONObject();
-	    total.put("history", params);
-	    
-	    StringEntity entity = new StringEntity(total.toString());
-        
-	    
-	    //params.put("picture[name]","MyPictureName");
-	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
-	    
-	    //Envío mi tupla
-	    client.post(this, URL_HISTORY, entity, "application/json", new AsyncHttpResponseHandler() {
-	        @Override
-	        public void onSuccess(String response) {
-	            Log.w("async", "success!!!!");
-	            mTextSendStatus.setText(response + " ok");
-	        } 
-	        
-	        @Override
-	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
-	        {
-	        	//mTextScan.setText(statusCode + " fallo");
-	        }
-
-
-	    });
-	}
-	
-	private void send_data()
-	{
-
-	    //Defino tupla que quiero crear
-		RequestParams params = new RequestParams();
-	    Map<String, String> map = new HashMap<String, String>();
-	    map.put("id_tablet", "1");
-	    map.put("sampling_time(1i)", "2015");
-	    map.put("sampling_time(2i)", "4");
-	    map.put("sampling_time(3i)", "6");
-	    map.put("sampling_time(4i)", "00");
-	    map.put("sampling_time(5i)", "05");
-	    map.put("congestion", "999");
-	    params.put("history", map);
-
-	    
-	    //params.put("picture[name]","MyPictureName");
-	    //params.put("picture[image]",File(Environment.getExternalStorageDirectory().getPath() + "/Pictures/CameraApp/test.jpg"));
-	    
-	    //Envío mi tupla
-	    client.post(URL_HISTORY, params, new AsyncHttpResponseHandler() {
-	        @Override
-	        public void onSuccess(String response) {
-	            Log.w("async", "success!!!!");
-	            mTextSendStatus.setText(response + " ok");
-	        } 
-	        
-	        @Override
-	        public void onFailure(int statusCode, org.apache.http.Header[] headers, byte[] responseBody, Throwable error)
-	        {
-	        	//mTextScan.setText(statusCode + " fallo");
-	        }
-
-
-	    });
-	}
-
-	//Método para monitorear el estado de conexión a Internet
-	private void installListener() {
-
-        if (broadcastReceiver == null) {
-
-            broadcastReceiver = new BroadcastReceiver() {
-
-                @Override
-                public void onReceive(Context context, Intent intent) {
-
-                    Bundle extras = intent.getExtras();
-
-                    NetworkInfo info = (NetworkInfo) extras
-                            .getParcelable("networkInfo");
-
-                    State state = info.getState();
-                    Log.d("InternalBroadcastReceiver", info.toString() + " "
-                            + state.toString());
-
-                    if (state == State.CONNECTED) {
-                    	//Intenet está OK
-                    	InternetConnection = true;
-
-                    } else {
-                    	//No tengo internet
-                    	InternetConnection = false;
-                    }
-
-                }
-            };
-
-            final IntentFilter intentFilter = new IntentFilter();
-            intentFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
-            registerReceiver(broadcastReceiver, intentFilter);
-            
-            doUpdateUi();
-        }
-    }
-
-	
 }

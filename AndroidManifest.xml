@@ -49,6 +49,10 @@
             android:name=".PcapService"
             android:description="@string/pcap_service_desc" />
         
+        <service
+            android:name=".ObserveService"
+            android:description="@string/observe_service_desc" />
+        
     </application>
 
 </manifest>
