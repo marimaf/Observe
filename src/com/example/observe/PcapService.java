@@ -295,13 +295,13 @@ public class PcapService extends Service {
 	}
 	
 	private void updatePreferences() {
-		mChannelHop = mPreferences.getBoolean(MainActivity.PREF_CHANNELHOP, true);
-		String chpref = mPreferences.getString(MainActivity.PREF_CHANNEL, "11");
+		mChannelHop = mPreferences.getBoolean(ObserveService.PREF_CHANNELHOP, true);
+		String chpref = mPreferences.getString(ObserveService.PREF_CHANNEL, "11");
 		mChannelLock = Integer.parseInt(chpref);
 		
 		mChannelList.clear();
 		for (int c = 1; c <= 11; c++) {
-			if (mPreferences.getBoolean(MainActivity.PREF_CHANPREFIX + Integer.toString(c), true)) {
+			if (mPreferences.getBoolean(ObserveService.PREF_CHANPREFIX + Integer.toString(c), true)) {
 				mChannelList.add(c);
 			}
 		}

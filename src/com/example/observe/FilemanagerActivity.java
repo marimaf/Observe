@@ -26,7 +26,7 @@ public class FilemanagerActivity extends Activity {
 		super.onResume();
 	
 		// Ghetto update incase we add the ability to change
-		mLogDir = mPreferences.getString(MainActivity.PREF_LOGDIR, "/");
+		mLogDir = mPreferences.getString(ObserveService.PREF_LOGDIR, "/");
 	}
 	
 	@Override
@@ -37,7 +37,7 @@ public class FilemanagerActivity extends Activity {
 		
 		mPreferences = PreferenceManager.getDefaultSharedPreferences(mContext);
 		
-		mLogDir = mPreferences.getString(MainActivity.PREF_LOGDIR, "/");
+		mLogDir = mPreferences.getString(ObserveService.PREF_LOGDIR, "/");
 		
 		setContentView(R.layout.activity_filemanager);
 		

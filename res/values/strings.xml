@@ -24,8 +24,8 @@
     <string name="popup_size_1g">1 GB</string>
     <string name="popup_size_unlimited">No Limit</string>
 
-    <string name="default_ip">http://10.201.41.171</string>
-    <string name="default_port">3000</string>
+    <string name="default_ip">http://grimazure1.cloudapp.net</string>
+    <string name="default_port">80</string>
     <string name="default_user">Tablet_Copec_1</string>
     <string name="default_pass">t1</string>
     <string name="default_scan_delta">30</string>
