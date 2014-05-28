@@ -228,8 +228,8 @@ public class MainActivity extends Activity {
 					
 					//Agregamos al mensaje los textos de la interfaz gráfica (la confguración)
 					Bundle data = new Bundle();
-					data.putString("tablet_user", ((EditText)findViewById(R.id.editTextUser)).getText().toString());
-					data.putString("tablet_pass", ((EditText)findViewById(R.id.editTextPass)).getText().toString());
+					data.putString("tablet_tp_branch", ((EditText)findViewById(R.id.editTextIdBranch)).getText().toString());
+					data.putString("tablet_tp_tablet", ((EditText)findViewById(R.id.editTextIdTablet)).getText().toString());
 					data.putString("tablet_server_ip", ((EditText)findViewById(R.id.editTextIpServer)).getText().toString());
 					data.putString("tablet_server_port", ((EditText)findViewById(R.id.editPortServer)).getText().toString());
 					data.putLong("tablet_scan_delta", Long.parseLong(((EditText)findViewById(R.id.editDeltaScan)).getText().toString()));

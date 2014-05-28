@@ -94,33 +94,34 @@
 	                        android:layout_width="wrap_content"
 	                        android:layout_height="wrap_content"
 	                        android:layout_gravity="left"
-	                        android:text="\t\tUser: "
+	                        android:text="\t\tId branch: "
 	                        android:textAppearance="?android:attr/textAppearanceMedium" />
 	
 	                    <EditText
-	                        android:id="@+id/editTextUser"
+	                        android:id="@+id/editTextIdBranch"
 	                        android:layout_width="wrap_content"
 	                        android:layout_height="wrap_content"
 	                        android:layout_gravity="left"
 	                        android:ems="10"
-	                        android:text="@string/default_user" />
+	                        android:inputType="number"
+	                        android:text="@string/default_id_branch" />
 	
 	                    <TextView
 	                        android:id="@+id/textPass"
 	                        android:layout_width="wrap_content"
 	                        android:layout_height="wrap_content"
 	                        android:layout_gravity="left"
-	                        android:text="\t\tPassword: "
+	                        android:text="\t\tId Tablet: "
 	                        android:textAppearance="?android:attr/textAppearanceMedium" />
 	
 	                    <EditText
-	                        android:id="@+id/editTextPass"
+	                        android:id="@+id/editTextIdTablet"
 	                        android:layout_width="wrap_content"
 	                        android:layout_height="wrap_content"
 	                        android:layout_gravity="left"
 	                        android:ems="10"
-	                        android:inputType="textPassword"
-	                        android:text="@string/default_pass" />
+	                        android:inputType="number"
+	                        android:text="@string/default_id_tablet" />
 	
 	                    <TextView
 	                        android:id="@+id/textDeltaScan"

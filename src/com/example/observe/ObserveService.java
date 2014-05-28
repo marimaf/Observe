@@ -54,8 +54,8 @@ public class ObserveService extends Service{
 	private ArrayList<Messenger> mMainClientList = new ArrayList<Messenger>();
 	
 	//Atributos para "run_observe"
-	private String tablet_user;
-	private String tablet_pass;
+	private String tablet_tp_branch;
+	private String tablet_tp_tablet;
 	private String tablet_server_ip;
 	private String tablet_server_port;
 	private long tablet_scan_delta;
@@ -88,8 +88,8 @@ public class ObserveService extends Service{
 					break;
 				case MSG_SCAN_START_STOP:
 					//Recibo parámetros para poder funcionar
-					tablet_user = msg.getData().getString("tablet_user");
-					tablet_pass = msg.getData().getString("tablet_pass");
+					tablet_tp_branch = msg.getData().getString("tablet_tp_branch");
+					tablet_tp_tablet = msg.getData().getString("tablet_tp_tablet");
 					tablet_server_ip = msg.getData().getString("tablet_server_ip");
 					tablet_server_port = msg.getData().getString("tablet_server_port");
 					tablet_scan_delta = msg.getData().getLong("tablet_scan_delta");
@@ -442,8 +442,8 @@ public class ObserveService extends Service{
 	{	
 		systemState = observeState.sending;
 		
-		String user = tablet_user;
-		String pass = tablet_pass;
+		String branch = tablet_tp_branch;
+		String tablet = tablet_tp_tablet;
 		String ip = tablet_server_ip;
 		String port = tablet_server_port;
 		String url = ip + ":" + port + "/histories/upload.json";
@@ -451,8 +451,8 @@ public class ObserveService extends Service{
 	    //Defino tupla que quiero crear
 		RequestParams params = new RequestParams();
 	    Map<String, String> map = new HashMap<String, String>();
-	    map.put("usr", user);
-	    map.put("pass",  pass);
+	    map.put("tp_id_branch", branch);
+	    map.put("tp_id_tablet",  tablet);
 	    params.put("tablet", map);
 	    params.put("cap", new File(mLogDir + cap_file));
 	    
