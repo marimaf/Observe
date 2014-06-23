@@ -340,6 +340,14 @@ public class ObserveService extends Service{
 		//Detener proceso
 		if(stopRescanHandler != null)
 			stopRescanHandler.removeCallbacks(ReScan);
+		
+		if(stopHandler != null)
+			stopHandler.removeCallbacks(stopServer);
+		
+		//si el servidor está andando, lo mato
+		if(systemState == observeState.scanning)
+			doUpdateServiceLogs(null, false);
+		
 		isRunning = false;
 		systemState = observeState.pause;
 	}
@@ -403,6 +411,7 @@ public class ObserveService extends Service{
         }
     };
     
+    private Handler stopHandler;
     private static final String cap_file = "/android.cap";
 	/***
      * Captura paquetes. Guarda los resultados en un archivo fijo: mLogDir + "/android.cap"
@@ -416,7 +425,7 @@ public class ObserveService extends Service{
 		//comienzo servidor
 		start(mLogDir + cap_file);
 		//thread que maneja la finalización del scaneo
-		Handler stopHandler = new Handler();
+		stopHandler = new Handler();
 		stopHandler.postDelayed(stopServer, time);
 	}
  
@@ -427,11 +436,14 @@ public class ObserveService extends Service{
 	 */
 	private void wait_and_rescan()
 	{
-		//Espero delta segundo y vuelvo a llamar
-		long time = 1000 * tablet_scan_delta;
-		stopRescanHandler = new Handler();
-		systemState = observeState.waiting;
-		stopRescanHandler.postDelayed(ReScan, time);
+		if(systemState != observeState.pause)
+		{
+			//Espero delta segundo y vuelvo a llamar
+			long time = 1000 * tablet_scan_delta;
+			stopRescanHandler = new Handler();
+			systemState = observeState.waiting;
+			stopRescanHandler.postDelayed(ReScan, time);
+		}
 	}
 	
 	/***
@@ -556,9 +568,11 @@ public class ObserveService extends Service{
 					mUsbPresent = true;
 					mUsbInfo = b.getString(UsbSource.BNDL_RADIOINFO_STRING, "No info available");
 				} else {
-					// Turn off logging
+					// Si se cae la conexión a la antena, detengo el servidor
 					if (mUsbPresent) 
-						doUpdateServiceLogs(mLogPath.toString(), false);
+					{
+						StopObserve();
+					}
 
 					mUsbPresent = false;
 					mUsbInfo = "";

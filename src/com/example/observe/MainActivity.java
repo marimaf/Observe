@@ -153,8 +153,8 @@ public class MainActivity extends Activity {
 
 		//Dejo actuvo el botón solo si tengo conexión a internet, hay una antena conectada y estoy
 		//en waiting o en pause
-		btStartStop.setEnabled(InternetConnection && mUsbPresent && 
-				(systemState == observeState.pause || systemState == observeState.waiting));
+		btStartStop.setEnabled(InternetConnection && mUsbPresent);
+		
 		if(!isRunning)
 			btStartStop.setText("Start");
 		else
@@ -169,6 +169,11 @@ public class MainActivity extends Activity {
 			mTextState.setText("Send data server");
 		if(systemState == observeState.waiting)
 			mTextState.setText("Waiting");
+		
+		//Si la antena se conecta, hago que comience a escuchar programa
+		if(InternetConnection && mUsbPresent && systemState == observeState.pause)
+			btStartStop.performClick();
+		
 	}
 
 	@Override
