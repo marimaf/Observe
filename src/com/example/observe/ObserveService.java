@@ -2,7 +2,9 @@ package com.example.observe;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -446,6 +448,30 @@ public class ObserveService extends Service{
 		}
 	}
 	
+	/**
+	 * Retorna la fecha en formato datetime de ruby
+	 * @return
+	 */
+	private String datetime_now()
+	{
+		Calendar c = Calendar.getInstance();
+		
+		// Objetivo => 2014-06-23T00:31:55-04:00
+		SimpleDateFormat formatter_date=new SimpleDateFormat("yyyy-MM-dd");
+		SimpleDateFormat formatter_time=new SimpleDateFormat("HH:mm:ss");
+		SimpleDateFormat formatter_zone=new SimpleDateFormat("Z");
+		
+		String date =formatter_date.format(c.getTime());
+		String time =formatter_time.format(c.getTime()); 
+		String zone =formatter_zone.format(c.getTime()); 
+		//Ajusto zona horaria
+		String r = "([+,-])([0-9][0-9])([0-9][0-9])";
+		zone = zone.replaceAll(r, "$1$2:$3");
+		String datetime = date + "T" + time + zone;
+		
+		return datetime;
+	}
+	
 	/***
 	 * Envío el archivo cap al servidor. 
 	 * @throws FileNotFoundException
@@ -467,6 +493,7 @@ public class ObserveService extends Service{
 	    map.put("tp_id_tablet",  tablet);
 	    params.put("tablet", map);
 	    params.put("cap", new File(mLogDir + cap_file));
+	    params.put("datetime", datetime_now());
 	    
 	    //Envío mi tupla
 	    client.post(url, params, new AsyncHttpResponseHandler() {
